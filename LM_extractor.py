@@ -60,7 +60,10 @@ def extract_bert_features(input_ids, mode, n_hl):
 
         for ii in range(n_hl):
             if embed_mode == "cls":
-                tmp.append(bert_output[2][ii + 1][:, 0, :].cpu().numpy())
+                try:
+                    tmp.append(bert_output[2][ii + 1][:, 0, :].cpu().numpy())
+                except:
+                    tmp.append(bert_output.hidden_states[ii + 1][:, 0, :].cpu().numpy())
             elif embed_mode == "mean":
                 tmp.append((bert_output[2][ii + 1].cpu().numpy()).mean(axis=1))
 
@@ -90,6 +93,31 @@ def get_model(embed):
         n_hl = 24
         hidden_dim = 1024
         MODEL = (AlbertModel, AlbertTokenizer, "albert-large-v2")
+
+    elif embed == "roberta-base":
+        n_hl = 12
+        hidden_dim = 768
+        MODEL = (RobertaModel, RobertaTokenizer, "roberta-base")
+
+    elif embed == "roberta-large":
+        n_hl = 24
+        hidden_dim = 1024
+        MODEL = (RobertaModel, RobertaTokenizer, "roberta-large")
+
+    elif embed == "deberta-v3-base":
+        n_hl = 12
+        hidden_dim = 768
+        MODEL = (DebertaV2Model, DebertaV2Tokenizer, "microsoft/deberta-v3-base")
+
+    elif embed == "deberta-v3-large":
+        n_hl = 24
+        hidden_dim = 1024
+        MODEL = (DebertaV2Model, DebertaV2Tokenizer, "microsoft/deberta-v3-large")
+    
+    elif embed == "electra-base":
+        n_hl = 12
+        hidden_dim = 768
+        MODEL = (ElectraModel, ElectraTokenizer, "google/electra-base-discriminator")
 
     model_class, tokenizer_class, pretrained_weights = MODEL
 
