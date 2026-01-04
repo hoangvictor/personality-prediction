@@ -167,9 +167,11 @@ def training(
             criterion = nn.CrossEntropyLoss()
 
             for _ in tqdm(range(epochs)):
-                train_one_epoch(model, train_loader, optimizer, criterion)
+                loss = train_one_epoch(model, train_loader, optimizer, criterion)
+                print(loss)
 
             val_acc = evaluate(model, test_loader)
+            print(f"Validation accuracy: {val_acc}")
 
             expdata["acc"].append(100 * val_acc)
             expdata["trait"].append(trait)
@@ -243,5 +245,5 @@ if __name__ == "__main__":
         epochs=epochs,
         save_model=save_model,
     )
-
+    df.to_csv("expdata.csv")
     print(df.head())

@@ -161,7 +161,7 @@ def parse_args_full_finetune():
     ap = argparse.ArgumentParser()
     ap.add_argument("-inp_dir", type=str, default="full_finetune/")
     ap.add_argument("-dataset", type=str, default="essays")
-    ap.add_argument("-lr", type=float, default=5e-4)
+    ap.add_argument("-lr", type=float, default=2e-5)
     ap.add_argument("-batch_size", type=int, default=32)
     ap.add_argument("-epochs", type=int, default=10)
     # ap.add_argument("-seed", type=int, default=np.random.randint(0,1000))
