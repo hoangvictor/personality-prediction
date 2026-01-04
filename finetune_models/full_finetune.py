@@ -110,6 +110,7 @@ def training(
     token_length,
     lm,
     hidden_dim,
+    embed,
     embed_mode,
     lr,
     batch_size,
@@ -155,6 +156,7 @@ def training(
             test_loader = DataLoader(
                 test_ds, batch_size=batch_size, shuffle=False
             )
+            lm, _, _, hidden_dim = get_lm(embed)
 
             model = LM_MLP(
                 lm=lm,
@@ -239,6 +241,7 @@ if __name__ == "__main__":
         token_length=token_length,
         lm=lm,
         hidden_dim=hidden_dim,
+        embed=embed,
         embed_mode=embed_mode,
         lr=lr,
         batch_size=batch_size,
