@@ -5,3 +5,5 @@ logs/
 explogs/
 data/pandora
 *.sbatch
+.env
+.DS_Store
