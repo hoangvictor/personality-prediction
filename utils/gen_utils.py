@@ -168,13 +168,14 @@ def parse_args_full_finetune():
     ap.add_argument(
         "-log_expdata", type=str_to_bool, nargs="?", const=True, default=True
     )
-    ap.add_argument("-embed", type=str, default="roberta-base")
+    ap.add_argument("-embed", type=str, default="bert-base")
     ap.add_argument("-layer", type=str, default="11")
     ap.add_argument("-mode", type=str, default="512_head")
     ap.add_argument("-embed_mode", type=str, default="cls")
     ap.add_argument("-jobid", type=int, default=0)
     ap.add_argument("-save_model", type=str, default="no")
     ap.add_argument("-token_length", type=int, default=512)
+    ap.add_argument("-dropout", type=int, default=0.25)
     args = ap.parse_args()
     return (
         args.inp_dir,
@@ -189,5 +190,6 @@ def parse_args_full_finetune():
         args.embed_mode,
         args.jobid,
         args.save_model,
-        args.token_length
+        args.token_length,
+        args.dropout
     )

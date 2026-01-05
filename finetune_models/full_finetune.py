@@ -116,6 +116,7 @@ def training(
     batch_size,
     epochs,
     save_model,
+    dropout
 ):
     if dataset == "kaggle":
         trait_labels = ["E", "N", "F", "J"]
@@ -138,11 +139,10 @@ def training(
 
     for trait_idx, trait in enumerate(trait_labels):
         y = targets[:, trait_idx]
-        best_acc = 0.0
-        best_state = None
 
+        best_trait_acc = 0.0
+        best_trait_model = None
         skf = StratifiedKFold(n_splits=n_splits, shuffle=False)
-
         for fold, (tr, te) in tqdm(enumerate(skf.split(input_ids, y), 1)):
             y_train = torch.tensor(y[tr], dtype=torch.long)
             y_test = torch.tensor(y[te], dtype=torch.long)
@@ -157,6 +157,7 @@ def training(
                 test_ds, batch_size=batch_size, shuffle=False
             )
             lm, _, _, hidden_dim = get_lm(embed)
+            lm.dropout = dropout
 
             model = LM_MLP(
                 lm=lm,
@@ -167,26 +168,32 @@ def training(
 
             optimizer = optim.Adam(model.parameters(), lr=lr)
             criterion = nn.CrossEntropyLoss()
+            best_fold_acc = 0.0
+            best_fold_model = None
 
             for _ in tqdm(range(epochs)):
                 loss = train_one_epoch(model, train_loader, optimizer, criterion)
-                print(loss)
+                print(f"Loss: {loss}")
 
-            val_acc = evaluate(model, test_loader)
-            print(f"Validation accuracy: {val_acc}")
+                val_acc = evaluate(model, test_loader)
 
-            expdata["acc"].append(100 * val_acc)
+                if val_acc > best_fold_acc:
+                    best_fold_acc = val_acc
+                    best_fold_model = model
+
+            print(f"Best validation accuracy: {best_fold_acc}")
+            expdata["acc"].append(100 * best_fold_acc)
             expdata["trait"].append(trait)
             expdata["fold"].append(fold)
 
-            if val_acc > best_acc:
-                best_acc = val_acc
-                best_state = {
-                    "model_state": model.state_dict(),
-                    "acc": best_acc,
-                }
+            if best_fold_acc > best_trait_acc:
+                best_trait_acc = best_fold_acc
+                best_trait_model = best_fold_model
 
-        best_models[trait] = best_state
+        best_models[trait] = {
+            "model_state": best_trait_model.state_dict(),
+            "acc": best_trait_acc,
+        }
 
     if str(save_model).lower() == "yes":
         out_dir = Path("finetune_lm_mlp/")
@@ -219,6 +226,7 @@ if __name__ == "__main__":
         jobid,
         save_model,
         token_length,
+        dropout
     ) = gen_utils.parse_args_full_finetune()
 
     torch.manual_seed(jobid)
@@ -247,6 +255,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         epochs=epochs,
         save_model=save_model,
+        dropout=dropout
     )
-    df.to_csv("expdata.csv")
+    df.to_csv(f"{embed}_expdata.csv")
     print(df.head())
