@@ -129,6 +129,7 @@ def training(
     lr,
     batch_size,
     epochs,
+    dropout,
     save_model,
 ):
     if dataset == "kaggle":
@@ -167,6 +168,7 @@ def training(
 
         # Reload fresh model for each fold
         lm_fold, _, _, hidden_dim = get_lm(embed)
+        lm_fold.dropout = dropout
         model = LM_MLP_MultiTrait(
             lm=lm_fold,
             hidden_dim=hidden_dim,
@@ -235,6 +237,7 @@ if __name__ == "__main__":
         jobid,
         save_model,
         token_length,
+        dropout
     ) = gen_utils.parse_args_full_finetune()
 
     # Reproducibility
@@ -264,6 +267,7 @@ if __name__ == "__main__":
         lr=lr,
         batch_size=batch_size,
         epochs=epochs,
+        dropout=dropout,
         save_model=save_model,
     )
 
