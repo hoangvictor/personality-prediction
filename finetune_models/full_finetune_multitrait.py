@@ -268,5 +268,5 @@ if __name__ == "__main__":
     )
 
     # Save results
-    df.to_csv("expdata_multitrait.csv")
+    df.to_csv(f"{embed}_expdata_multitrait.csv")
     print(df.groupby("trait")["acc"].mean())
