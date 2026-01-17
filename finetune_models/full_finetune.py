@@ -116,7 +116,7 @@ def training(
     batch_size,
     epochs,
     save_model,
-    dropout
+    dropout,
 ):
     if dataset == "kaggle":
         trait_labels = ["E", "N", "F", "J"]
@@ -129,12 +129,14 @@ def training(
     expdata = {"acc": [], "trait": [], "fold": []}
     best_models = {}
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory
+    log_dir = f"logs/full_finetune_{embed}_{jobid}"
+    logger = HistoryLogger(log_dir)
+
     input_ids = [torch.tensor(x, dtype=torch.long) for x in input_ids]
-    input_ids = pad_sequence(
-        input_ids,
-        batch_first=True,
-        padding_value=0
-    ).to(DEVICE)
+    input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0).to(DEVICE)
     targets = np.asarray(targets)
 
     for trait_idx, trait in enumerate(trait_labels):
@@ -150,12 +152,8 @@ def training(
             train_ds = TensorDataset(input_ids[tr], y_train)
             test_ds = TensorDataset(input_ids[te], y_test)
 
-            train_loader = DataLoader(
-                train_ds, batch_size=batch_size, shuffle=True
-            )
-            test_loader = DataLoader(
-                test_ds, batch_size=batch_size, shuffle=False
-            )
+            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+            test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
             lm, _, _, hidden_dim = get_lm(embed)
             lm.dropout = dropout
 
@@ -171,11 +169,38 @@ def training(
             best_fold_acc = 0.0
             best_fold_model = None
 
-            for _ in tqdm(range(epochs)):
+            for epoch in range(epochs):
                 loss = train_one_epoch(model, train_loader, optimizer, criterion)
-                print(f"Loss: {loss}")
 
-                val_acc = evaluate(model, test_loader)
+                # Evaluate val loss and acc
+                model.eval()
+                val_loss_accum = 0.0
+                correct = 0
+                total = 0
+
+                with torch.no_grad():
+                    for v_input_ids, v_labels in test_loader:
+                        v_input_ids = v_input_ids.to(DEVICE)
+                        v_labels = v_labels.to(DEVICE)
+                        v_logits = model(v_input_ids)
+                        v_loss = criterion(v_logits, v_labels)
+                        val_loss_accum += v_loss.item()
+
+                        preds = torch.argmax(v_logits, dim=1)
+                        correct += (preds == v_labels).sum().item()
+                        total += v_labels.size(0)
+
+                val_loss = val_loss_accum / len(test_loader)
+                val_acc = correct / total
+
+                print(
+                    f"Epoch {epoch+1} - Trait {trait} - Fold {fold} - Loss: {loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}"
+                )
+
+                # Log with trait included in fold name to distinguish
+                logger.log_epoch(
+                    f"{trait}_fold{fold}", epoch + 1, loss, val_loss, val_acc
+                )
 
                 if val_acc > best_fold_acc:
                     best_fold_acc = val_acc
@@ -189,6 +214,11 @@ def training(
             if best_fold_acc > best_trait_acc:
                 best_trait_acc = best_fold_acc
                 best_trait_model = best_fold_model
+
+        # Plot curves for this trait after all folds are done (or inside loop per fold)
+        # Let's plot per fold inside loop or at end.
+        logger.save_logs(f"logs_{trait}.json")
+        logger.plot_curves(f"curves_{trait}")
 
         best_models[trait] = {
             "model_state": best_trait_model.state_dict(),
@@ -205,6 +235,7 @@ def training(
                 out_dir / f"LM_MLP_{trait}.pt",
             )
 
+    logger.save_logs("final_logs.json")
     return pd.DataFrame(expdata)
 
 
@@ -226,7 +257,7 @@ if __name__ == "__main__":
         jobid,
         save_model,
         token_length,
-        dropout
+        dropout,
     ) = gen_utils.parse_args_full_finetune()
 
     torch.manual_seed(jobid)
@@ -255,7 +286,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         epochs=epochs,
         save_model=save_model,
-        dropout=dropout
+        dropout=dropout,
     )
     df.to_csv(f"{embed}_expdata.csv")
     print(df.head())

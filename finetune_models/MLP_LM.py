@@ -65,6 +65,13 @@ def training(dataset, inputs, full_targets, inp_dir, save_model):
     expdata["acc"], expdata["trait"], expdata["fold"] = [], [], []
     best_models = {}
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory
+    # Getting 'embed' from outer scope or arguments if available, else standard name
+    log_dir = f"logs/MLP_LM_{dataset}"
+    logger = HistoryLogger(log_dir)
+
     for trait_idx in range(full_targets.shape[1]):
         # reset for each trait
         best_model, best_accuracy = None, 0.0
@@ -108,6 +115,21 @@ def training(dataset, inputs, full_targets, inp_dir, save_model):
                 verbose=0,
             )
 
+            # Log fold history
+            # Trait label lookup
+            trait_name = trait_labels[trait_idx]
+            fold_name = f"{trait_name}_fold{k+1}"
+
+            formatted_history = {
+                "loss": history.history["loss"],
+                "val_loss": history.history["val_loss"],
+                "acc": history.history[
+                    "accuracy"
+                ],  # key is 'accuracy' based on metrics=['accuracy']
+                "val_acc": history.history["val_accuracy"],
+            }
+            logger.log_fold(fold_name, formatted_history)
+
             max_val_accuracy = max(history.history["val_accuracy"])
             expdata["acc"].append(100 * max_val_accuracy)
 
@@ -118,6 +140,19 @@ def training(dataset, inputs, full_targets, inp_dir, save_model):
 
         # store the best model for this trait
         best_models[trait_labels[trait_idx]] = best_model
+
+        # Plot curves for this trait
+        trait_name = trait_labels[trait_idx]
+        logger.save_logs(f"logs_{trait_name}.json")
+        logger.plot_curves(f"curves_{trait_name}")
+        # Clear logger logs to avoid mixing traits in one plot set if we want separation?
+        # Actually logger accumulates. Let's keep distinct keys (trait_fold) and plot all or separate?
+        # My plot_curves plots EVERYTHING in logger.logs.
+        # If I want to separate, I should re-init logger or clear it.
+        # But saving one big log file is also good.
+        # However, to avoid plotting 50 plots at once in the end for the last trait...
+        # Let's clear logs for the next trait loop to keep things clean per trait file.
+        logger.logs = {}
 
     # save the best models to separate files
     if str(save_model).lower() == "yes":

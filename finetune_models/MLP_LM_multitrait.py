@@ -77,6 +77,12 @@ def training(
     # KFold for multi-label split
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory
+    log_dir = f"logs/MLP_LM_multitrait_{dataset}_{embed}_{jobid if 'jobid' in locals() else 0}"
+    logger = HistoryLogger(log_dir)
+
     best_model = None
     best_avg_acc = 0.0
 
@@ -106,6 +112,19 @@ def training(
             validation_data=(x_test, y_test),
             verbose=0,
         )
+
+        # Log entire history for this fold
+        fold_key = f"fold{fold}"
+        # We need to construct the history dict as expected by log_utils (lists of floats)
+        # Keras history.history has 'loss', 'binary_accuracy', 'val_loss', 'val_binary_accuracy'
+
+        formatted_history = {
+            "loss": history.history["loss"],
+            "val_loss": history.history["val_loss"],
+            "acc": history.history["binary_accuracy"],
+            "val_acc": history.history["val_binary_accuracy"],
+        }
+        logger.log_fold(fold, formatted_history)
 
         # Evaluate
         # model.evaluate returns [loss, binary_accuracy]
@@ -137,6 +156,10 @@ def training(
         Path(path).mkdir(parents=True, exist_ok=True)
         best_model.save(f"{path}/MLP_LM_MultiTrait_{dataset}.h5")
         print(f"Saved best model to {path}/MLP_LM_MultiTrait_{dataset}.h5")
+
+    # Plot and save all logs
+    logger.save_logs("all_folds_logs.json")
+    logger.plot_curves("curve")
 
     df = pd.DataFrame(expdata)
     return df
