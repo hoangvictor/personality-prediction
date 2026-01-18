@@ -142,16 +142,12 @@ def training(dataset, inputs, full_targets, inp_dir, save_model):
         best_models[trait_labels[trait_idx]] = best_model
 
         # Plot curves for this trait
+        # Plot curves for this trait
         trait_name = trait_labels[trait_idx]
         logger.save_logs(f"logs_{trait_name}.json")
         logger.plot_curves(f"curves_{trait_name}")
-        # Clear logger logs to avoid mixing traits in one plot set if we want separation?
-        # Actually logger accumulates. Let's keep distinct keys (trait_fold) and plot all or separate?
-        # My plot_curves plots EVERYTHING in logger.logs.
-        # If I want to separate, I should re-init logger or clear it.
-        # But saving one big log file is also good.
-        # However, to avoid plotting 50 plots at once in the end for the last trait...
-        # Let's clear logs for the next trait loop to keep things clean per trait file.
+
+        # Clear logger logs to avoid mixing traits in one plot set
         logger.logs = {}
 
     # save the best models to separate files

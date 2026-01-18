@@ -345,20 +345,61 @@ def training(args, input_ids, targets, trait_labels):
                 lm, _, _, hidden_dim = get_lm(args.embed)
                 freeze_layers(lm, args.n_freeze)  # FREEZE HERE
 
-                model = LM_MLP_SingleTrait(lm, hidden_dim, args.embed_mode).to(DEVICE)
+                # Revert to n_classes=2 for CrossEntropyLoss
+                model = LM_MLP_SingleTrait(
+                    lm, hidden_dim, args.embed_mode, n_classes=2
+                ).to(DEVICE)
                 optimizer = optim.Adam(model.parameters(), lr=args.lr)
-                criterion = nn.BCEWithLogitsLoss()
+                criterion = nn.CrossEntropyLoss()
 
                 fold_key = f"{trait}_fold{fold}"
 
                 for epoch in range(args.epochs):
-                    train_loss = train_one_epoch(
-                        model, train_loader, optimizer, criterion
-                    )
-                    val_loss, val_acc = evaluate(model, test_loader, criterion)
+                    # Manual training loop step to handle different label types if needed
+                    # But train_one_epoch assumes float labels for BCE.
+                    # We need to adapt it.
+                    # Let's write a specific loop here or update train_one_epoch to be generic.
+                    # Since we are inside the 'else', let's just inline the loop to be safe and clear.
+
+                    model.train()
+                    train_loss = 0.0
+                    for input_ids_batch, labels_batch in train_loader:
+                        input_ids_batch = input_ids_batch.to(DEVICE)
+                        labels_batch = labels_batch.long().to(DEVICE)  # CE needs long
+
+                        optimizer.zero_grad()
+                        logits = model(input_ids_batch)
+                        loss = criterion(logits, labels_batch)
+                        loss.backward()
+                        optimizer.step()
+                        train_loss += loss.item()
+
+                    train_loss /= len(train_loader)
+
+                    # Evaluate
+                    model.eval()
+                    val_loss_accum = 0.0
+                    total_correct_scalar = 0
+                    total_samples = 0
+
+                    with torch.no_grad():
+                        for input_ids_batch, labels_batch in test_loader:
+                            input_ids_batch = input_ids_batch.to(DEVICE)
+                            labels_batch = labels_batch.long().to(DEVICE)
+
+                            logits = model(input_ids_batch)
+                            loss = criterion(logits, labels_batch)
+                            val_loss_accum += loss.item()
+
+                            # Argmax for CE
+                            preds = torch.argmax(logits, dim=1)
+                            total_correct_scalar += (preds == labels_batch).sum().item()
+                            total_samples += labels_batch.size(0)
+
+                    val_loss = val_loss_accum / len(test_loader)
+                    val_acc = total_correct_scalar / total_samples
 
                     logger.log_epoch(fold_key, epoch + 1, train_loss, val_loss, val_acc)
-
                     print(f"Ep {epoch+1}: Loss={train_loss:.4f}, Val Acc={val_acc:.4f}")
 
                 results.append({"fold": fold, "trait": trait, "acc": val_acc})

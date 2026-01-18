@@ -68,7 +68,7 @@ def train_one_epoch(model, loader, optimizer, criterion):
 
     for input_ids, labels in loader:
         input_ids = input_ids.to(DEVICE)
-        labels = labels.to(DEVICE)
+        labels = labels.float().to(DEVICE).unsqueeze(1)
 
         optimizer.zero_grad()
         logits = model(input_ids)
@@ -123,7 +123,7 @@ def training(
     else:
         trait_labels = ["EXT", "NEU", "AGR", "CON", "OPN"]
 
-    n_classes = 2
+    n_classes = 1
     n_splits = 10
 
     expdata = {"acc": [], "trait": [], "fold": []}
@@ -146,8 +146,8 @@ def training(
         best_trait_model = None
         skf = StratifiedKFold(n_splits=n_splits, shuffle=False)
         for fold, (tr, te) in tqdm(enumerate(skf.split(input_ids, y), 1)):
-            y_train = torch.tensor(y[tr], dtype=torch.long)
-            y_test = torch.tensor(y[te], dtype=torch.long)
+            y_train = torch.tensor(y[tr], dtype=torch.float)
+            y_test = torch.tensor(y[te], dtype=torch.float)
 
             train_ds = TensorDataset(input_ids[tr], y_train)
             test_ds = TensorDataset(input_ids[te], y_test)
@@ -165,7 +165,7 @@ def training(
             ).to(DEVICE)
 
             optimizer = optim.Adam(model.parameters(), lr=lr)
-            criterion = nn.CrossEntropyLoss()
+            criterion = nn.BCEWithLogitsLoss()
             best_fold_acc = 0.0
             best_fold_model = None
 
@@ -181,12 +181,13 @@ def training(
                 with torch.no_grad():
                     for v_input_ids, v_labels in test_loader:
                         v_input_ids = v_input_ids.to(DEVICE)
-                        v_labels = v_labels.to(DEVICE)
+                        # BCE needs [Batch, 1], so unsqueeze
+                        v_labels = v_labels.float().to(DEVICE).unsqueeze(1)
                         v_logits = model(v_input_ids)
                         v_loss = criterion(v_logits, v_labels)
                         val_loss_accum += v_loss.item()
 
-                        preds = torch.argmax(v_logits, dim=1)
+                        preds = torch.sigmoid(v_logits).round()
                         correct += (preds == v_labels).sum().item()
                         total += v_labels.size(0)
 
