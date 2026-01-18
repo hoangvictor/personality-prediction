@@ -262,6 +262,12 @@ def training(args, input_ids, targets, trait_labels):
 
     results = []  # To store final results
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory
+    log_dir = f"logs/partial_freeze{args.n_freeze}_{args.head_type}_{args.embed}"
+    logger = HistoryLogger(log_dir)
+
     if args.head_type == "multi":
         print(f"Starting Multi-Head Training (jointly predicting {n_traits} traits)...")
         # Just train one model for all traits
@@ -288,28 +294,32 @@ def training(args, input_ids, targets, trait_labels):
             optimizer = optim.Adam(model.parameters(), lr=args.lr)
             criterion = nn.BCEWithLogitsLoss()
 
-            history = {"train_loss": [], "val_loss": [], "val_acc": []}
-
             for epoch in range(args.epochs):
                 train_loss = train_one_epoch(model, train_loader, optimizer, criterion)
                 val_loss, val_accs = evaluate(model, test_loader, criterion)
 
-                history["train_loss"].append(train_loss)
-                history["val_loss"].append(val_loss)
-                history["val_acc"].append(val_accs)
+                # Multi-trait val_accs is an array [n_traits]
+                avg_val_acc = np.mean(val_accs)
+
+                logger.log_epoch(
+                    fold, epoch + 1, train_loss, val_loss, avg_val_acc, val_accs
+                )
 
                 print(
-                    f"Ep {epoch+1}: T_Loss={train_loss:.4f}, V_Loss={val_loss:.4f}, V_Acc (Avg)={np.mean(val_accs):.4f}"
+                    f"Ep {epoch+1}: T_Loss={train_loss:.4f}, V_Loss={val_loss:.4f}, V_Acc (Avg)={avg_val_acc:.4f}"
                 )
 
             # Plot history for this fold
-            plot_history(history, f"log_fold{fold}_multihead.png")
+            logger.save_logs(f"logs_fold_{fold}.json")
+            logger.plot_curves(f"curves_fold{fold}")
 
             # Record final result
             final_loss, final_accs = evaluate(model, test_loader, criterion)
             results.append({"fold": fold, "trait": "Avg", "acc": np.mean(final_accs)})
             for i, trait in enumerate(trait_labels):
                 results.append({"fold": fold, "trait": trait, "acc": final_accs[i]})
+
+        logger.save_logs("final_logs_multi.json")
 
     else:  # single head - separate models
         print(f"Starting Single-Head Training (Independent models per trait)...")
@@ -339,7 +349,7 @@ def training(args, input_ids, targets, trait_labels):
                 optimizer = optim.Adam(model.parameters(), lr=args.lr)
                 criterion = nn.BCEWithLogitsLoss()
 
-                history = {"train_loss": [], "val_loss": [], "val_acc": []}
+                fold_key = f"{trait}_fold{fold}"
 
                 for epoch in range(args.epochs):
                     train_loss = train_one_epoch(
@@ -347,17 +357,18 @@ def training(args, input_ids, targets, trait_labels):
                     )
                     val_loss, val_acc = evaluate(model, test_loader, criterion)
 
-                    history["train_loss"].append(train_loss)
-                    history["val_loss"].append(val_loss)
-                    history["val_acc"].append(val_acc)
+                    logger.log_epoch(fold_key, epoch + 1, train_loss, val_loss, val_acc)
 
                     print(f"Ep {epoch+1}: Loss={train_loss:.4f}, Val Acc={val_acc:.4f}")
 
-                plot_history(history, f"log_{trait}_fold{fold}_single.png")
+                results.append({"fold": fold, "trait": trait, "acc": val_acc})
 
-                results.append(
-                    {"fold": fold, "trait": trait, "acc": history["val_acc"][-1]}
-                )
+            # Save logs and plot for this trait
+            logger.save_logs(f"logs_{trait}.json")
+            logger.plot_curves(f"curves_{trait}")
+            # Reset logs for next trait to avoid cluttered plots? Or keep cumulatively?
+            # Creating a new logger instance or clearing logs is cleaner for per-trait files.
+            logger.logs = {}
 
     return pd.DataFrame(results)
 
