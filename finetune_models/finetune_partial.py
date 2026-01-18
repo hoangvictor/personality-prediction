@@ -114,7 +114,7 @@ class LM_MLP_SingleTrait(nn.Module):
         self.fc1 = nn.Linear(hidden_dim, 50)
         self.relu = nn.ReLU()
         # Binary classification (can use 1 output with BCE or 2 with CE. Let's use 1 with BCE for consistency)
-        self.fc2 = nn.Linear(50, 1)
+        self.fc2 = nn.Linear(50, n_classes)
 
     def forward(self, input_ids, attention_mask=None):
         outputs = self.lm(
@@ -265,7 +265,7 @@ def training(args, input_ids, targets, trait_labels):
     from utils.log_utils import HistoryLogger
 
     # Create log directory
-    log_dir = f"logs/partial_freeze{args.n_freeze}_{args.head_type}_{args.embed}"
+    log_dir = f"{args.log_dir}/partial_freeze{args.n_freeze}_{args.head_type}_{args.embed}"
     logger = HistoryLogger(log_dir)
 
     if args.head_type == "multi":
@@ -404,12 +404,13 @@ def training(args, input_ids, targets, trait_labels):
 
                 results.append({"fold": fold, "trait": trait, "acc": val_acc})
 
-            # Save logs and plot for this trait
-            logger.save_logs(f"logs_{trait}.json")
-            logger.plot_curves(f"curves_{trait}")
-            # Reset logs for next trait to avoid cluttered plots? Or keep cumulatively?
-            # Creating a new logger instance or clearing logs is cleaner for per-trait files.
-            logger.logs = {}
+                # Save logs and plot for this trait
+                logger.save_logs(f"logs_{trait}_{fold}.json")
+                logger.plot_curves(f"curves_{trait}_{fold}")
+            
+                # Reset logs for next trait to avoid cluttered plots? Or keep cumulatively?
+                # Creating a new logger instance or clearing logs is cleaner for per-trait files.
+                logger.logs = {}
 
     return pd.DataFrame(results)
 
@@ -437,6 +438,9 @@ def parse_args():
         help="multi: joint model, single: separate models",
     )
     parser.add_argument("-mode", type=str, default="512_head", help="legacy mode arg")
+    parser.add_argument(
+        "-log_dir", type=str, default="log", help="Log directory"
+    )
 
     return parser.parse_args()
 
