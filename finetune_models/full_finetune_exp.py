@@ -68,7 +68,7 @@ def train_one_epoch(model, loader, optimizer, criterion):
 
     for input_ids, labels in loader:
         input_ids = input_ids.to(DEVICE)
-        labels = labels.float().to(DEVICE).unsqueeze(1)
+        labels = labels.to(DEVICE)
 
         optimizer.zero_grad()
         logits = model(input_ids)
@@ -117,43 +117,69 @@ def training(
     epochs,
     save_model,
     dropout,
+    save_path
 ):
+    os.makedirs(save_path, exist_ok=True)
+    csv_file_path = os.path.join(save_path, "results.csv")
+    models_dir = os.path.join(save_path, "models")
+
+    results_df = None
+    if os.path.exists(csv_file_path):
+        results_df = pd.read_csv(csv_file_path)
+
     if dataset == "kaggle":
         trait_labels = ["E", "N", "F", "J"]
     else:
         trait_labels = ["EXT", "NEU", "AGR", "CON", "OPN"]
 
-    n_classes = 1
+    n_classes = 2
     n_splits = 10
 
     expdata = {"acc": [], "trait": [], "fold": []}
+    if results_df is not None:
+        expdata["acc"] = results_df["acc"].tolist()
+        expdata["trait"] = results_df["trait"].tolist()
+        expdata["fold"] = results_df["fold"].tolist()
+
     best_models = {}
-
-    from utils.log_utils import HistoryLogger
-
-    # Create log directory
-    log_dir = f"logs/full_finetune_{embed}_{jobid}"
-    logger = HistoryLogger(log_dir)
+    if os.path.exists(models_dir):
+        for trait in trait_labels:
+            if os.path.exists(os.path.join(models_dir, f"best_{trait}.pt")):
+                best_models[trait] = torch.load(os.path.join(models_dir, f"best_{trait}.pt")),
 
     input_ids = [torch.tensor(x, dtype=torch.long) for x in input_ids]
-    input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0).to(DEVICE)
+    input_ids = pad_sequence(
+        input_ids,
+        batch_first=True,
+        padding_value=0
+    ).to(DEVICE)
     targets = np.asarray(targets)
 
     for trait_idx, trait in enumerate(trait_labels):
+        print("-"*50)
+        print(f"Trait {trait}")
         y = targets[:, trait_idx]
 
         best_trait_acc = 0.0
         best_trait_model = None
         skf = StratifiedKFold(n_splits=n_splits, shuffle=False)
         for fold, (tr, te) in tqdm(enumerate(skf.split(input_ids, y), 1)):
-            y_train = torch.tensor(y[tr], dtype=torch.float)
-            y_test = torch.tensor(y[te], dtype=torch.float)
+            if results_df is not None and results_df[(results_df["fold"] == fold) & (results_df["trait"] == trait)].shape[0] > 0:
+                continue
+
+            print(f"Fold {fold}")
+            y_train = torch.tensor(y[tr], dtype=torch.long)
+            y_test = torch.tensor(y[te], dtype=torch.long)
 
             train_ds = TensorDataset(input_ids[tr], y_train)
             test_ds = TensorDataset(input_ids[te], y_test)
 
-            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-            test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, shuffle=True
+            )
+            test_loader = DataLoader(
+                test_ds, batch_size=batch_size, shuffle=False
+            )
             lm, _, _, hidden_dim = get_lm(embed)
             lm.dropout = dropout
 
@@ -165,48 +191,27 @@ def training(
             ).to(DEVICE)
 
             optimizer = optim.Adam(model.parameters(), lr=lr)
-            criterion = nn.BCEWithLogitsLoss()
+            criterion = nn.CrossEntropyLoss()
             best_fold_acc = 0.0
             best_fold_model = None
+            losses = []
+            val_accs = []
 
-            for epoch in range(epochs):
+            for _ in tqdm(range(epochs)):
                 loss = train_one_epoch(model, train_loader, optimizer, criterion)
+                print(f"Loss: {loss}")
 
-                # Evaluate val loss and acc
-                model.eval()
-                val_loss_accum = 0.0
-                correct = 0
-                total = 0
+                val_acc = evaluate(model, test_loader)
 
-                with torch.no_grad():
-                    for v_input_ids, v_labels in test_loader:
-                        v_input_ids = v_input_ids.to(DEVICE)
-                        # BCE needs [Batch, 1], so unsqueeze
-                        v_labels = v_labels.float().to(DEVICE).unsqueeze(1)
-                        v_logits = model(v_input_ids)
-                        v_loss = criterion(v_logits, v_labels)
-                        val_loss_accum += v_loss.item()
-
-                        preds = torch.sigmoid(v_logits).round()
-                        correct += (preds == v_labels).sum().item()
-                        total += v_labels.size(0)
-
-                val_loss = val_loss_accum / len(test_loader)
-                val_acc = correct / total
-
-                print(
-                    f"Epoch {epoch+1} - Trait {trait} - Fold {fold} - Loss: {loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}"
-                )
-
-                # Log with trait included in fold name to distinguish
-                logger.log_epoch(
-                    f"{trait}_fold{fold}", epoch + 1, loss, val_loss, val_acc
-                )
+                losses.append(loss)
+                val_accs.append(val_acc)
 
                 if val_acc > best_fold_acc:
                     best_fold_acc = val_acc
                     best_fold_model = model
 
+            print(f"Losses: {losses}")
+            print(f"Validation accuracies: {val_accs}")
             print(f"Best validation accuracy: {best_fold_acc}")
             expdata["acc"].append(100 * best_fold_acc)
             expdata["trait"].append(trait)
@@ -216,28 +221,24 @@ def training(
                 best_trait_acc = best_fold_acc
                 best_trait_model = best_fold_model
 
-        # Plot curves for this trait after all folds are done (or inside loop per fold)
-        # Let's plot per fold inside loop or at end.
-        logger.save_logs(f"logs_{trait}.json")
-        logger.plot_curves(f"curves_{trait}")
+            results_df = pd.DataFrame(expdata)
+            results_df.to_csv(csv_file_path)
+        
+        if best_trait_model:
+            best_models[trait] = {
+                "model_state": best_trait_model.state_dict(),
+                "acc": best_trait_acc,
+            }
 
-        best_models[trait] = {
-            "model_state": best_trait_model.state_dict(),
-            "acc": best_trait_acc,
-        }
+        if str(save_model).lower() == "yes":
+            out_dir = Path(models_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
 
-    if str(save_model).lower() == "yes":
-        out_dir = Path("finetune_lm_mlp/")
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        for trait, state in best_models.items():
-            torch.save(
-                state,
-                out_dir / f"LM_MLP_{trait}.pt",
-            )
-
-    logger.save_logs("final_logs.json")
-    return pd.DataFrame(expdata)
+            for trait, state in best_models.items():
+                torch.save(
+                    state,
+                    out_dir / f"best_{trait}.pt",
+                )
 
 
 # ---------------------------
@@ -258,7 +259,7 @@ if __name__ == "__main__":
         jobid,
         save_model,
         token_length,
-        dropout,
+        dropout
     ) = gen_utils.parse_args_full_finetune()
 
     torch.manual_seed(jobid)
@@ -274,20 +275,24 @@ if __name__ == "__main__":
         mode,
     )
 
-    df = training(
-        dataset=dataset,
-        input_ids=input_ids,
-        targets=targets,
-        token_length=token_length,
-        lm=lm,
-        hidden_dim=hidden_dim,
-        embed=embed,
-        embed_mode=embed_mode,
-        lr=lr,
-        batch_size=batch_size,
-        epochs=epochs,
-        save_model=save_model,
-        dropout=dropout,
-    )
-    df.to_csv(f"{embed}_expdata.csv")
-    print(df.head())
+    for epochs in [10, 20, 40]:
+        print("-"*50)
+        print("-"*50)
+        print("-"*50)
+        print(f"Epochs {epochs}")
+        training(
+            dataset=dataset,
+            input_ids=input_ids,
+            targets=targets,
+            token_length=token_length,
+            lm=lm,
+            hidden_dim=hidden_dim,
+            embed=embed,
+            embed_mode=embed_mode,
+            lr=lr,
+            batch_size=batch_size,
+            epochs=epochs,
+            save_model=save_model,
+            dropout=dropout,
+            save_path=f"{embed}_expdata_num_epochs_{epochs}"
+        )

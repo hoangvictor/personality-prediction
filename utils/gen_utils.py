@@ -175,7 +175,7 @@ def parse_args_full_finetune():
     ap.add_argument("-jobid", type=int, default=0)
     ap.add_argument("-save_model", type=str, default="no")
     ap.add_argument("-token_length", type=int, default=512)
-    ap.add_argument("-dropout", type=int, default=0.25)
+    ap.add_argument("-dropout", type=float, default=0.25)
     args = ap.parse_args()
     return (
         args.inp_dir,
