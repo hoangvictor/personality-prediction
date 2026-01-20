@@ -150,6 +150,12 @@ def training(
     # StratifiedKFold doesn't support multi-label natively well without complex combination classes
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory based on experiment
+    log_dir = f"logs/full_finetune_multitrait_{embed}_{jobid}"
+    logger = HistoryLogger(log_dir)
+
     best_model_state = None
     best_avg_acc = 0.0
 
@@ -186,9 +192,40 @@ def training(
             # Evaluate
             accuracies = evaluate(model, test_loader)
             avg_acc = np.mean(accuracies)
+
+            # Since we don't have val_loss in the original evaluate,
+            # we can either compute it or just log 0/same as train for now if not modifying evaluate.
+            # But let's verify if we can get val_loss easily.
+            # evaluate() only returns accuracies. Let's compute val loss if possible or ignore.
+            # For this quick update, I'll assume we care most about Train Loss vs Val Acc.
+            # Proper val_loss would require updating evaluate().
+            # Let's update evaluate inline or just log approximate.
+            # Actually, let's keep it simple and just log valid acc.
+
+            # Update: To get valid loss, we need to calc it.
+            # I will assume users want Curves so I should probably calculate it.
+            # But changing evaluate() everywhere is risky.
+            # I will modify evaluate inside this loop locally or better, just pass 0 for now
+            # as the request emphasizes "training logs to visualize the training loss, eval loss".
+            # Okay, I MUST calculate eval loss.
+
+            # Let's compute val_loss
+            model.eval()
+            val_loss_accum = 0.0
+            with torch.no_grad():
+                for v_input_ids, v_labels in test_loader:
+                    v_input_ids = v_input_ids.to(DEVICE)
+                    v_labels = v_labels.float().to(DEVICE)
+                    v_logits = model(v_input_ids)
+                    v_loss = criterion(v_logits, v_labels)
+                    val_loss_accum += v_loss.item()
+            val_loss = val_loss_accum / len(test_loader)
+
             print(
-                f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f} - Avg Acc: {avg_acc:.4f} - Per trait: {accuracies}"
+                f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f} - Val Loss: {val_loss:.4f} - Avg Acc: {avg_acc:.4f} - Per trait: {accuracies}"
             )
+
+            logger.log_epoch(fold, epoch + 1, loss, val_loss, avg_acc, accuracies)
 
             if avg_acc > fold_best_acc:
                 fold_best_acc = avg_acc
@@ -198,6 +235,10 @@ def training(
         # Record results for this fold
         # Since we evaluate after training, we verify final performance on test set
         final_accuracies = evaluate(model, test_loader)
+
+        # Plot curves for this fold immediately
+        logger.save_logs(f"logs_fold_{fold}.json")
+        logger.plot_curves(f"curves_{dataset}_{embed}")
 
         for i, trait in enumerate(trait_labels):
             expdata["trait"].append(trait)
@@ -216,6 +257,7 @@ def training(
         torch.save(best_model_state, out_dir / "LM_MLP_MultiTrait_Best.pt")
         print(f"Saved best model with avg accuracy: {best_avg_acc:.4f}")
 
+    logger.save_logs("final_logs.json")
     return pd.DataFrame(expdata)
 
 
@@ -237,7 +279,7 @@ if __name__ == "__main__":
         jobid,
         save_model,
         token_length,
-        dropout
+        dropout,
     ) = gen_utils.parse_args_full_finetune()
 
     # Reproducibility

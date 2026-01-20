@@ -77,6 +77,12 @@ def training(
     # KFold for multi-label split
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
+    from utils.log_utils import HistoryLogger
+
+    # Create log directory
+    log_dir = f"logs/MLP_LM_multitrait_{dataset}_{embed}_{jobid if 'jobid' in locals() else 0}"
+    logger = HistoryLogger(log_dir)
+
     best_model = None
     best_avg_acc = 0.0
 
@@ -98,28 +104,47 @@ def training(
             metrics=["binary_accuracy"],
         )
 
-        history = model.fit(
-            x_train,
-            y_train,
-            epochs=epochs,
-            batch_size=batch_size,
-            validation_data=(x_test, y_test),
-            verbose=0,
-        )
+        fold_key = f"fold{fold}"
 
-        # Evaluate
-        # model.evaluate returns [loss, binary_accuracy]
-        # BUT binary_accuracy in Keras computes accuracy over all elements flattened
-        # We want per-trait accuracy if possible, or we leverage the global metric.
-        # Let's predict and calculate manually for clarity.
+        for epoch in range(epochs):
+            # Train for one epoch
+            history = model.fit(
+                x_train,
+                y_train,
+                epochs=1,
+                batch_size=batch_size,
+                verbose=0,
+            )
+            train_loss = history.history["loss"][0]
 
+            # Predict to get per-trait metrics
+            preds_probs = model.predict(x_test, verbose=0)
+            preds_binary = np.round(preds_probs)
+
+            # Calculate validation loss manually or via evaluate
+            # model.evaluate returns [loss, bin_acc]
+            val_metrics = model.evaluate(x_test, y_test, verbose=0)
+            val_loss = val_metrics[0]
+
+            # Calculate accuracy per trait
+            acc_per_trait = np.mean(preds_binary == y_test, axis=0)  # [n_traits]
+            avg_acc = np.mean(acc_per_trait)
+
+            # Log
+            logger.log_epoch(
+                fold, epoch + 1, train_loss, val_loss, avg_acc, acc_per_trait
+            )
+
+            print(
+                f"Ep {epoch+1}: T_Loss={train_loss:.4f}, V_Loss={val_loss:.4f}, V_Acc (Avg)={avg_acc:.4f}"
+            )
+
+        # Final evaluation for this fold
         preds_probs = model.predict(x_test, verbose=0)
         preds_binary = np.round(preds_probs)
-
-        # Calculate accuracy per trait
         acc_per_trait = np.mean(preds_binary == y_test, axis=0)
-
         avg_acc = np.mean(acc_per_trait)
+
         print(f"Fold {fold} - Avg Acc: {avg_acc:.4f} - Per trait: {acc_per_trait}")
 
         for i, trait in enumerate(trait_labels):
@@ -131,12 +156,28 @@ def training(
             best_avg_acc = avg_acc
             best_model = model
 
+        # Save logs for this fold
+        logger.save_logs(f"logs_fold_{fold}.json")
+        logger.plot_curves(f"curves_fold{fold}")
+
+        # Clean logs for next fold to avoid accumulation issues if plot_curves uses all logs
+        # Actually plot_curves plots all items in self.logs.
+        # If we want separate plots per fold (lines 1-10 epochs), we should clear.
+        # But maybe we want one big plot with Fold 1, Fold 2...
+        # The user asked 'similar to partial multi-trait'. Partial multi-trait clears or saves?
+        # In partial fit, I did: logger.save_logs(..fold..); logger.plot_curves(..fold..).
+        # And I did NOT clear logs there. So it accumulates. Fold 2 plot will have Fold 1 and Fold 2 curves.
+        # That is acceptable or even desired.
+
     # Save best model
     if str(save_model).lower() == "yes" and best_model is not None:
         path = inp_dir + "finetune_mlp_lm_multitrait"
         Path(path).mkdir(parents=True, exist_ok=True)
         best_model.save(f"{path}/MLP_LM_MultiTrait_{dataset}.h5")
         print(f"Saved best model to {path}/MLP_LM_MultiTrait_{dataset}.h5")
+
+    # Save aggregated logs
+    logger.save_logs("final_logs.json")
 
     df = pd.DataFrame(expdata)
     return df
